@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual envs
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Models (large binary files, manual download)
+assets/*.onnx
+
+# Photos (user-generated content)
+photos/
+
+# OS
+.DS_Store
+Thumbs.db

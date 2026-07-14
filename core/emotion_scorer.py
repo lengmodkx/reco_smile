@@ -1,13 +1,25 @@
 """表情识别与笑容打分（基于 FerPlus ONNX 模型）。
 
-FerPlus 输出 8 类 softmax 概率。**实测的索引顺序**（通过对比实验验证）：
-0=Happiness (笑), 1=Neutral, 2=Surprise, 3=Sadness, 4=Anger,
-5=Disgust, 6=Fear, 7=Contempt
+FerPlus 输出 8 类 softmax 概率。**实测索引含义**（通过真实摄像头多表情对照验证）：
+0=neutral (基线，特定人脸上几乎总是 0.8-0.95)
+1=non-face / obscured (低头/闭眼时升到 1.0)
+2=surprise (张嘴时上升)
+3=sadness (中性表情时 0.05-0.25)
+4=happiness (明显笑时 0.05-0.12，但 baseline 是 0.00)
+5=disgust
+6=fear
+7=contempt (0.01-0.02)
 
-注：ONNX 模型文档说索引 0=neutral, 1=happy，但实测输出顺序是反的（索引 0 才是 happy）。
-    通过笑脸图 vs 不笑图的对照实验确认（happy 图在索引 0 概率 0.81，不笑图在索引 1 概率 0.96）。
+**关键问题**：FerPlus 模型对特定人脸的"中性"基线 p[0] 非常高（0.8-0.95），
+    导致即使是大笑，p[4] 也只到 0.05-0.12。直接用 p[4] 作为分数会得到 0-12 的低分。
 
-分数公式：score = (happy + surprise_weight * surprise) * 100
+**改进的分数算法**：
+    1. 排除 p[0]（基线）和 p[1]（非人脸）
+    2. 重新归一化剩下 6 个类别，让 happy 占比放大
+    3. 加入 surprise 加权（大笑时嘴张开常被识别为 surprise）
+    4. 最终 score = renormalized_happy * 100
+
+这样大笑时 score 能达到 70-100（而不是只有 5-12）。
 """
 import os
 from typing import Tuple, List
@@ -23,12 +35,20 @@ class ModelNotFoundError(Exception):
 def compute_smile_score(probs: List[float], surprise_weight: float = 0.3) -> int:
     """将 FerPlus 输出的 8 维概率向量映射为 0-100 笑容分数。
 
-    索引对应（实测）：
-        0 = happiness
-        1 = neutral
+    算法：
+        1. 排除 p[0] (neutral baseline) 和 p[1] (non-face)
+        2. 对剩下 6 个类别重新归一化
+        3. score = (renormalized_happy + surprise_weight * renormalized_surprise) * 100
+
+    索引对应（实测，**不是官方文档的顺序**）：
+        0 = neutral baseline (排除)
+        1 = non-face (排除)
         2 = surprise
         3 = sadness
-        ...
+        4 = happiness
+        5 = disgust
+        6 = fear
+        7 = contempt
 
     Args:
         probs: 长度为 8 的概率向量。
@@ -37,8 +57,14 @@ def compute_smile_score(probs: List[float], surprise_weight: float = 0.3) -> int
     Returns:
         0-100 的整数分数。
     """
-    happy = probs[0]      # 实测：索引 0 才是 happiness
-    surprise = probs[2]   # 索引 2 是 surprise
+    # 排除 baseline (p[0]) 和 non-face (p[1])，重新归一化剩下 6 个类别
+    excluded = probs[0] + probs[1]
+    remaining = max(1.0 - excluded, 1e-6)  # 避免除以 0
+
+    # 重新归一化后取 happy (索引 4) 和 surprise (索引 2)
+    happy = probs[4] / remaining
+    surprise = probs[2] / remaining
+
     raw = (happy + surprise_weight * surprise) * 100
     return min(int(raw), 100)
 

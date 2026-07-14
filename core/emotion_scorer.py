@@ -41,13 +41,13 @@ def compute_smile_score(
 ) -> int:
     """根据嘴宽/眼距计算 0-100 笑容分数。
 
-    算法（基于实测基线 ~0.80~0.95，嘴部张开会进一步增加分数）：
-        - 0.75: 嘴角下压 → 0 分
+    算法（v2: 灵敏度调高，适配'基线较高'的人脸）：
+        - 0.80: 嘴角下压 → 0 分
         - 0.85: 中性 → 20 分
-        - 0.95: 明显微笑 → 60 分
-        - 1.00+: 大笑 → 80 分
-        - 1.05+: 露齿大笑 → 100 分
-        线性映射：score = (ratio - 0.75) / 0.30 * 100
+        - 0.90: 明显微笑 → 50 分
+        - 0.95: 大笑 → 80 分
+        - 1.00+: 露齿大笑 → 100 分
+        线性映射：score = (ratio - 0.80) / 0.20 * 100
 
     Args:
         mouth_width_ratio: 嘴宽 / 眼距。
@@ -58,14 +58,14 @@ def compute_smile_score(
     Returns:
         0-100 的整数分数。
     """
-    # 主信号：嘴宽比，0.75 → 0 分，1.05 → 100 分
-    base_score = (mouth_width_ratio - 0.75) / 0.30 * 100
+    # 主信号：嘴宽比，0.80 → 0 分，1.00 → 100 分
+    base_score = (mouth_width_ratio - 0.80) / 0.20 * 100
     base_score = max(0, min(100, base_score))
 
     # 张嘴 bonus：eye_to_mouth_y_ratio 变小说明嘴部上移（张嘴）
     # 典型值: 闭嘴时 ~0.85, 张嘴时 ~0.65
     if eye_to_mouth_y_ratio > 0:
-        y_bonus = max(0, (0.85 - eye_to_mouth_y_ratio) / 0.20) * surprise_weight * 20
+        y_bonus = max(0, (0.85 - eye_to_mouth_y_ratio) / 0.20) * surprise_weight * 30
         base_score = base_score + y_bonus
 
     return min(int(base_score), 100)

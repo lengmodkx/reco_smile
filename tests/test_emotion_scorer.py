@@ -8,21 +8,21 @@ from core.emotion_scorer import EmotionScorer, compute_smile_score
 # 分数映射算法测试（不需要模型）
 def test_smile_score_zero_when_mouth_very_narrow():
     """嘴很窄（嘴角下压）时分数应 < 20"""
-    # 0.60 对应 0 分
-    score = compute_smile_score(mouth_width_ratio=0.60)
-    assert score < 20, f"嘴很窄应该分数很低，实际 {score}"
+    # 0.80 是基准（0 分）
+    score = compute_smile_score(mouth_width_ratio=0.80)
+    assert score < 20, f"嘴宽 0.80 应接近 0 分，实际 {score}"
 
 
 def test_smile_score_hundred_for_very_wide_mouth():
     """嘴很宽（大笑）时分数应 ≥ 90"""
-    score = compute_smile_score(mouth_width_ratio=1.20)
+    score = compute_smile_score(mouth_width_ratio=1.05)
     assert score >= 90, f"嘴很宽应该分数 ≥ 90，实际 {score}"
 
 
 def test_smile_score_mid_range():
-    """嘴宽中等时分数应在 30-70"""
-    score = compute_smile_score(mouth_width_ratio=0.85)
-    assert 30 <= score <= 70, f"中等嘴宽应该分数 30-70，实际 {score}"
+    """嘴宽中等时分数应在 20-60"""
+    score = compute_smile_score(mouth_width_ratio=0.90)
+    assert 20 <= score <= 60, f"嘴宽 0.90 应该分数 20-60，实际 {score}"
 
 
 def test_smile_score_capped_at_100():
@@ -33,9 +33,15 @@ def test_smile_score_capped_at_100():
 
 def test_smile_score_with_mouth_open_bonus():
     """张嘴有 bonus 加成"""
-    score_closed = compute_smile_score(mouth_width_ratio=0.85, eye_to_mouth_y_ratio=0.85)
-    score_open = compute_smile_score(mouth_width_ratio=0.85, eye_to_mouth_y_ratio=0.65)
+    score_closed = compute_smile_score(mouth_width_ratio=0.90, eye_to_mouth_y_ratio=0.85)
+    score_open = compute_smile_score(mouth_width_ratio=0.90, eye_to_mouth_y_ratio=0.65)
     assert score_open > score_closed, f"张嘴分数应更高: closed={score_closed}, open={score_open}"
+
+
+def test_smile_score_smile_above_threshold():
+    """明显微笑（mouth_ratio=0.95）应达到 60+ 拍照阈值"""
+    score = compute_smile_score(mouth_width_ratio=0.95)
+    assert score >= 60, f"嘴宽 0.95 应达到 60+ 拍照阈值，实际 {score}"
 
 
 # EmotionScorer 类测试

@@ -9,8 +9,8 @@
     空格    : 手动抓拍当前画面
 """
 import os
-import time
 from datetime import datetime
+from typing import Optional
 
 import cv2
 
@@ -57,81 +57,88 @@ def draw_debug_info(frame, result: SmileResult) -> None:
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
 
-def save_photo(frame, result: SmileResult) -> str:
-    """保存照片到 captured 目录，返回保存路径。"""
+def save_photo(frame, result: Optional[SmileResult] = None) -> str:
+    """保存照片到 captured 目录，返回保存路径。result 为空时省略分数后缀。"""
     ensure_dir(config.CAPTURE_DIR)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
-    filename = f"smile_{timestamp}_score{int(result.score)}.jpg"
+    score_suffix = f"_score{int(result.score)}" if result else ""
+    filename = f"smile_{timestamp}{score_suffix}.jpg"
     filepath = os.path.join(config.CAPTURE_DIR, filename)
-    cv2.imwrite(filepath, frame)
+    if not cv2.imwrite(filepath, frame):
+        raise OSError(f"保存照片失败: {filepath}")
     return filepath
 
 
 def main() -> None:
     ensure_dir(config.CAPTURE_DIR)
     detector = SmileDetector()
-
     cap = cv2.VideoCapture(config.CAMERA_INDEX)
-    if not cap.isOpened():
-        print(f"无法打开摄像头，索引: {config.CAMERA_INDEX}")
-        print("提示：可尝试修改 config.py 中的 CAMERA_INDEX（0/1/2...）")
-        return
 
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.FRAME_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.FRAME_HEIGHT)
+    try:
+        if not cap.isOpened():
+            print(f"无法打开摄像头，索引: {config.CAMERA_INDEX}")
+            print("提示：可尝试修改 config.py 中的 CAMERA_INDEX（0/1/2...）")
+            return
 
-    consecutive_count = 0
-    cooldown = 0
-    print("程序已启动，按 'q' 退出，按 '空格' 手动拍照。")
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.FRAME_WIDTH)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.FRAME_HEIGHT)
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("读取摄像头失败")
-            break
+        consecutive_count = 0
+        cooldown = 0
+        print("程序已启动，按 'q' 退出，按 '空格' 手动拍照。")
 
-        # 镜像显示（自拍习惯）
-        display_frame = cv2.flip(frame, 1) if config.MIRROR_PREVIEW else frame
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                print("读取摄像头失败")
+                break
 
-        result = detector.detect(display_frame)
-        captured_path = None
+            # 镜像显示（自拍习惯）。未镜像时也要 copy()，
+            # 否则 display_frame 会与 frame 共享内存，绘制调试信息会污染原始帧。
+            display_frame = cv2.flip(frame, 1) if config.MIRROR_PREVIEW else frame.copy()
 
-        if result:
-            if config.SHOW_DEBUG_INFO:
-                draw_debug_info(display_frame, result)
+            result = detector.detect(display_frame)
 
-            # 自动拍照逻辑
-            if result.score >= config.SMILE_THRESHOLD:
-                consecutive_count += 1
-                if cooldown <= 0 and consecutive_count >= config.SMILE_CONSECUTIVE_FRAMES:
-                    captured_path = save_photo(frame, result)  # 保存原始帧，不保存镜像
-                    print(f"[自动抓拍] 分数: {result.score:.0f} -> {captured_path}")
+            if result:
+                if config.SHOW_DEBUG_INFO:
+                    draw_debug_info(display_frame, result)
+
+                # 自动拍照逻辑
+                if result.score >= config.SMILE_THRESHOLD:
+                    consecutive_count += 1
+                    if cooldown <= 0 and consecutive_count >= config.SMILE_CONSECUTIVE_FRAMES:
+                        captured_path = save_photo(frame, result)  # 保存原始帧，不保存镜像
+                        print(f"[自动抓拍] 分数: {result.score:.0f} -> {captured_path}")
+                        consecutive_count = 0
+                        cooldown = config.CAPTURE_COOLDOWN_FRAMES
+                else:
                     consecutive_count = 0
-                    cooldown = config.CAPTURE_COOLDOWN_FRAMES
             else:
+                # 未检测到人脸也要重置，避免非连续帧被误当作“连续笑容”
                 consecutive_count = 0
 
-        if cooldown > 0:
-            cooldown -= 1
+            if cooldown > 0:
+                cooldown -= 1
 
-        # 提示文字
-        status = "Detecting..." if result else "No face"
-        cv2.putText(display_frame, status, (10, 60),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            # 提示文字
+            status = "Detecting..." if result else "No face"
+            cv2.putText(display_frame, status, (10, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
-        cv2.imshow("Smile Detector", display_frame)
+            cv2.imshow("Smile Detector", display_frame)
 
-        key = cv2.waitKey(1) & 0xFF
-        if key in (ord("q"), 27):  # q 或 ESC
-            break
-        elif key == ord(" ") and result:
-            captured_path = save_photo(frame, result)
-            print(f"[手动抓拍] 分数: {result.score:.0f} -> {captured_path}")
-
-    cap.release()
-    detector.release()
-    cv2.destroyAllWindows()
-    print("程序已退出")
+            key = cv2.waitKey(1) & 0xFF
+            if key in (ord("q"), 27):  # q 或 ESC
+                break
+            elif key == ord(" "):
+                captured_path = save_photo(frame, result)
+                score_text = f"{result.score:.0f}" if result else "N/A"
+                print(f"[手动抓拍] 分数: {score_text} -> {captured_path}")
+    finally:
+        cap.release()
+        detector.release()
+        cv2.destroyAllWindows()
+        print("程序已退出")
 
 
 if __name__ == "__main__":

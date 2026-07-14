@@ -80,10 +80,12 @@ class SmileDetector:
             lm = landmarks[idx]
             return int(lm.x * w), int(lm.y * h)
 
-        left_corner = to_px(self.LEFT_CORNER)
-        right_corner = to_px(self.RIGHT_CORNER)
-        upper_lip = to_px(self.UPPER_LIP)
-        lower_lip = to_px(self.LOWER_LIP)
+        # 一次性把 468 个关键点转成像素坐标，后续从中按点号取用，避免重复计算
+        all_px = [to_px(i) for i in range(len(landmarks))]
+        left_corner = all_px[self.LEFT_CORNER]
+        right_corner = all_px[self.RIGHT_CORNER]
+        upper_lip = all_px[self.UPPER_LIP]
+        lower_lip = all_px[self.LOWER_LIP]
 
         # 计算嘴宽（左右嘴角距离）
         mouth_width = self._distance(left_corner, right_corner)
@@ -96,19 +98,26 @@ class SmileDetector:
         # 嘴张开比例：高度 / 宽度
         mouth_open_ratio = mouth_height / mouth_width
 
-        # 嘴角上扬角度（相对于水平线）
+        # 嘴角相对唇心的上扬量（归一化到嘴宽）：
+        # >0 表示嘴角高于唇心（上扬/微笑），<0 表示下垂。
+        # 注意 y 轴向下为正，所以“上扬”对应 y 更小。
+        mouth_center_y = (upper_lip[1] + lower_lip[1]) / 2.0
+        corners_avg_y = (left_corner[1] + right_corner[1]) / 2.0
+        curvature = (mouth_center_y - corners_avg_y) / mouth_width
+
+        # 嘴角连线相对水平线的倾角（仅用于调试展示，不参与评分）
         angle = math.degrees(
             math.atan2(right_corner[1] - left_corner[1], right_corner[0] - left_corner[0])
         )
 
         # 映射为 0~100 分数
-        score = self._compute_score(angle, mouth_open_ratio)
+        score = self._compute_score(curvature, mouth_open_ratio)
 
-        # 计算人脸框（用于可视化）
-        all_px = [to_px(i) for i in range(len(landmarks))]
-        xs = [p[0] for p in all_px]
-        ys = [p[1] for p in all_px]
-        face_box = (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+        # 计算人脸框（用于可视化）——单次遍历（numpy）求包围盒
+        pts = np.asarray(all_px)
+        min_x, min_y = pts.min(axis=0)
+        max_x, max_y = pts.max(axis=0)
+        face_box = (int(min_x), int(min_y), int(max_x - min_x), int(max_y - min_y))
 
         return SmileResult(
             score=score,
@@ -127,35 +136,32 @@ class SmileDetector:
         return math.hypot(p1[0] - p2[0], p1[1] - p2[1])
 
     @staticmethod
-    def _compute_score(angle: float, mouth_open_ratio: float) -> float:
+    def _compute_score(curvature: float, mouth_open_ratio: float) -> float:
         """
-        根据嘴角上扬角度和嘴张开比例计算笑容分数。
+        根据嘴角上扬程度和嘴张开比例计算笑容分数。
 
         参数说明：
-        - angle: 嘴角连线与水平线的夹角（度）。负值表示下垂，正值表示上扬。
+        - curvature: 嘴角相对唇心的上扬量，已归一化到嘴宽。
+          >0 表示嘴角上扬（微笑），=0 表示水平，<0 表示下垂。
+          该指标对“对称微笑”同样有效——不像旧的“嘴角连线倾角”，
+          后者只有在左右嘴角高度不一致时才非零，对称笑容会被算成 0 分。
         - mouth_open_ratio: 嘴张开高度 / 嘴宽度。
 
-        映射规则（经验值，可调整）：
-        - 嘴角角度：0° 映射为 0 分，3° 映射为 100 分。
+        映射规则（经验值，可按实际调整）：
+        - 上扬量 curvature：0.00 映射为 0 分，0.12 映射为 100 分。
         - 嘴张开比例：0.40 映射为 0 分，0.55 映射为 100 分。
-        - 最终分数 = 0.85 * 角度分 + 0.15 * 张开分。
-
-        说明：
-        - 实际大笑时 MediaPipe 检测到的嘴角上扬角度通常只有 2°~5°，所以把
-          角度满分阈值降到 3°。
-        - 不同人自然状态下的嘴张开度差异很大（你自然状态 open≈0.45），因此
-          把嘴张开的 0 分基准提高到 0.40，避免无表情时分数虚高。
+        - 最终分数 = 0.85 * 上扬分 + 0.15 * 张开分。
         """
         # 嘴角上扬分数
-        angle_score = angle / 3.0 * 100.0
-        angle_score = max(0.0, min(100.0, angle_score))
+        curve_score = curvature / 0.12 * 100.0
+        curve_score = max(0.0, min(100.0, curve_score))
 
         # 嘴张开分数
         open_score = (mouth_open_ratio - 0.40) / 0.15 * 100.0
         open_score = max(0.0, min(100.0, open_score))
 
         # 加权综合：嘴角上扬是笑容的主要特征，嘴张开度作为辅助
-        final_score = 0.85 * angle_score + 0.15 * open_score
+        final_score = 0.85 * curve_score + 0.15 * open_score
         return round(final_score, 1)
 
 
@@ -174,11 +180,13 @@ if __name__ == "__main__":
         sys.exit(1)
 
     detector = SmileDetector(static_image_mode=True)
-    result = detector.detect(img)
-    if result is None:
-        print("未检测到人脸")
-    else:
-        print(f"笑容分数: {result.score}")
-        print(f"嘴角角度: {result.angle:.2f}°")
-        print(f"嘴张开比: {result.mouth_open_ratio:.3f}")
-    detector.release()
+    try:
+        result = detector.detect(img)
+        if result is None:
+            print("未检测到人脸")
+        else:
+            print(f"笑容分数: {result.score}")
+            print(f"嘴角角度: {result.angle:.2f}°")
+            print(f"嘴张开比: {result.mouth_open_ratio:.3f}")
+    finally:
+        detector.release()

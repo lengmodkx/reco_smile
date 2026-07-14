@@ -7,33 +7,34 @@ import config
 
 
 # 分数映射算法测试（不需要模型）
+# 实测索引顺序：0=Happiness, 1=Neutral, 2=Surprise, ...
 def test_smile_score_zero_for_no_happy_no_surprise():
-    probs = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # 全 neutral
+    probs = [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # 全 neutral
     assert compute_smile_score(probs, surprise_weight=0.3) == 0
 
 
 def test_smile_score_100_for_all_happy():
-    probs = [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # 全 happy
+    probs = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # 全 happy
     assert compute_smile_score(probs, surprise_weight=0.3) == 100
 
 
 def test_smile_score_combines_surprise():
     """惊喜加权：大笑时分数应明显高于纯微笑"""
-    probs_only_happy = [0.0, 0.6, 0.0, 0.0, 0.4, 0.0, 0.0, 0.0]
-    probs_happy_and_surprise = [0.0, 0.6, 0.4, 0.0, 0.0, 0.0, 0.0, 0.0]
+    probs_only_happy = [0.6, 0.0, 0.0, 0.0, 0.4, 0.0, 0.0, 0.0]
+    probs_happy_and_surprise = [0.6, 0.0, 0.4, 0.0, 0.0, 0.0, 0.0, 0.0]
     score_a = compute_smile_score(probs_only_happy, surprise_weight=0.3)
     score_b = compute_smile_score(probs_happy_and_surprise, surprise_weight=0.3)
     assert score_b > score_a
 
 
 def test_smile_score_capped_at_100():
-    probs = [0.0, 1.5, 1.5, 0.0, 0.0, 0.0, 0.0, 0.0]  # 概率和 > 1
+    probs = [1.5, 0.0, 1.5, 0.0, 0.0, 0.0, 0.0, 0.0]  # 概率和 > 1
     assert compute_smile_score(probs, surprise_weight=0.3) == 100
 
 
 def test_smile_score_different_weights():
     """权重越大，surprise 影响越大"""
-    probs = [0.0, 0.5, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0]
+    probs = [0.5, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0]
     score_low = compute_smile_score(probs, surprise_weight=0.0)
     score_high = compute_smile_score(probs, surprise_weight=1.0)
     assert score_high > score_low

@@ -1,8 +1,11 @@
 """表情识别与笑容打分（基于 FerPlus ONNX 模型）。
 
-FerPlus 输出 8 类 softmax 概率，索引对应：
-0=Neutral, 1=Happy, 2=Surprise, 3=Sad, 4=Anger,
+FerPlus 输出 8 类 softmax 概率。**实测的索引顺序**（通过对比实验验证）：
+0=Happiness (笑), 1=Neutral, 2=Surprise, 3=Sadness, 4=Anger,
 5=Disgust, 6=Fear, 7=Contempt
+
+注：ONNX 模型文档说索引 0=neutral, 1=happy，但实测输出顺序是反的（索引 0 才是 happy）。
+    通过笑脸图 vs 不笑图的对照实验确认（happy 图在索引 0 概率 0.81，不笑图在索引 1 概率 0.96）。
 
 分数公式：score = (happy + surprise_weight * surprise) * 100
 """
@@ -20,6 +23,13 @@ class ModelNotFoundError(Exception):
 def compute_smile_score(probs: List[float], surprise_weight: float = 0.3) -> int:
     """将 FerPlus 输出的 8 维概率向量映射为 0-100 笑容分数。
 
+    索引对应（实测）：
+        0 = happiness
+        1 = neutral
+        2 = surprise
+        3 = sadness
+        ...
+
     Args:
         probs: 长度为 8 的概率向量。
         surprise_weight: surprise 概率的权重（0-1）。
@@ -27,8 +37,8 @@ def compute_smile_score(probs: List[float], surprise_weight: float = 0.3) -> int
     Returns:
         0-100 的整数分数。
     """
-    happy = probs[1]
-    surprise = probs[2]
+    happy = probs[0]      # 实测：索引 0 才是 happiness
+    surprise = probs[2]   # 索引 2 是 surprise
     raw = (happy + surprise_weight * surprise) * 100
     return min(int(raw), 100)
 
@@ -53,12 +63,14 @@ class EmotionScorer:
 
     def score(self, face_bgr: np.ndarray) -> Tuple[int, List[float]]:
         """对一张人脸图像（BGR，任意尺寸）进行推理，返回 (分数, 8 维概率)。"""
-        # 预处理：转灰度 → resize → 标准化 → NCHW float32
+        # 预处理：转灰度 → resize → 0-255 raw float32 → NCHW
+        # FerPlus ONNX 模型期望 [0, 255] 原始像素值（不经归一化）
+        # 参考: https://github.com/onnx/models/blob/main/validated/vision/body_analysis/emotion_ferplus/
+        #       以及真实使用案例 markrajesh/FacialEmotions
         gray = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2GRAY)
         resized = cv2.resize(gray, self.INPUT_SIZE)
-        normalized = resized.astype(np.float32) / 255.0
-        # FerPlus 训练时用 mean=0，std=1；不做 mean subtraction（按官方示例）
-        input_tensor = normalized.reshape(1, 1, 64, 64)
+        input_data = resized.astype(np.float32) * 1.0  # raw [0, 255]
+        input_tensor = input_data.reshape(1, 1, 64, 64)
 
         # 推理
         outputs = self._session.run(None, {self._input_name: input_tensor})

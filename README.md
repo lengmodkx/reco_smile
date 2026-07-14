@@ -27,10 +27,11 @@ pip install -r requirements.txt
 
 ## 模型下载
 
-将以下两个 .onnx 文件下载到 `assets/` 目录：
+下载到 `assets/` 目录：
 
-1. **YuNet 人脸检测**: https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
-2. **FerPlus 表情识别**: https://github.com/onnx/models/raw/main/validated/vision/body_analysis/emotion_ferplus/model/emotion-ferplus-8.onnx
+1. **YuNet 人脸检测**（必需）: https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
+
+**注意**：本项目已弃用 FerPlus 表情模型，改用 YuNet 自带的 5 个面部关键点 + 几何特征打分（嘴宽/眼距 + 嘴部 Y 偏移）。
 
 ## 运行
 

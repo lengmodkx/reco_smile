@@ -11,28 +11,34 @@ import config
 @pytest.fixture
 def pipeline_with_mocks(tmp_path, monkeypatch):
     """构造一个使用 mock 的 pipeline，无需真实模型"""
-    # 跳过模型加载（用 mock 替换）
     if not os.path.exists(config.YUNET_MODEL_PATH):
         monkeypatch.setattr(
             "core.smile_pipeline.FaceDetector", lambda *a, **kw: MagicMock()
         )
-    if not os.path.exists(config.FERPLUS_MODEL_PATH):
-        monkeypatch.setattr(
-            "core.smile_pipeline.EmotionScorer", lambda *a, **kw: MagicMock()
-        )
 
     pipeline = SmilePipeline(
         yunet_path=config.YUNET_MODEL_PATH,
-        ferplus_path=config.FERPLUS_MODEL_PATH,
+        ferplus_path="",  # 不再使用
         photos_dir=str(tmp_path),
         threshold=60,
         cooldown=2.0,
     )
-    # 注入 mock 的 detect/score 行为
+    # 注入 mock 的 detect 行为，返回含 landmarks 的人脸
     pipeline.face_detector.detect = MagicMock(return_value=[
-        {"x": 100, "y": 100, "w": 200, "h": 200}
+        {
+            "x": 100, "y": 100, "w": 200, "h": 200,
+            "landmarks": {
+                "right_eye": (300.0, 150.0),
+                "left_eye": (150.0, 150.0),
+                "nose": (220.0, 220.0),
+                "mouth_right": (320.0, 280.0),
+                "mouth_left": (180.0, 280.0),
+            },
+            "score": 0.95,
+        }
     ])
-    pipeline.emotion_scorer.score = MagicMock(return_value=(85, [0.0]*8))
+    # mock 几何特征打分
+    pipeline.emotion_scorer.score_from_landmarks = MagicMock(return_value=(85, {"mouth_width_ratio": 1.0}))
     return pipeline
 
 
@@ -57,7 +63,7 @@ def test_pipeline_no_face_returns_zero(pipeline_with_mocks):
 
 def test_pipeline_high_score_triggers_save(pipeline_with_mocks):
     """分数 ≥ 阈值时应拍照"""
-    pipeline_with_mocks.emotion_scorer.score = MagicMock(return_value=(80, [0.0]*8))
+    pipeline_with_mocks.emotion_scorer.score_from_landmarks = MagicMock(return_value=(80, {}))
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
     result = pipeline_with_mocks.process(frame)
     assert result["saved_path"] is not None
@@ -66,7 +72,7 @@ def test_pipeline_high_score_triggers_save(pipeline_with_mocks):
 
 def test_pipeline_low_score_no_save(pipeline_with_mocks):
     """分数 < 阈值时不拍照"""
-    pipeline_with_mocks.emotion_scorer.score = MagicMock(return_value=(40, [0.0]*8))
+    pipeline_with_mocks.emotion_scorer.score_from_landmarks = MagicMock(return_value=(40, {}))
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
     result = pipeline_with_mocks.process(frame)
     assert result["saved_path"] is None
@@ -74,7 +80,7 @@ def test_pipeline_low_score_no_save(pipeline_with_mocks):
 
 def test_pipeline_cooldown_prevents_consecutive_saves(pipeline_with_mocks):
     """冷却期内即使分数高也不重复拍"""
-    pipeline_with_mocks.emotion_scorer.score = MagicMock(return_value=(80, [0.0]*8))
+    pipeline_with_mocks.emotion_scorer.score_from_landmarks = MagicMock(return_value=(80, {}))
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
     r1 = pipeline_with_mocks.process(frame)
     r2 = pipeline_with_mocks.process(frame)
@@ -88,7 +94,5 @@ def test_pipeline_annotated_frame_has_face_box(pipeline_with_mocks):
     result = pipeline_with_mocks.process(frame)
     annotated = result["annotated_frame"]
     assert annotated.shape == frame.shape
-    # 人脸框区域应该有非灰色像素（绿色框）
-    # 在 (100,100) 到 (300,300) 区域检查
     region = annotated[100:300, 100:300]
-    assert region.std() > 5  # 框周围像素有变化
+    assert region.std() > 5

@@ -1,5 +1,5 @@
 """人脸检测封装（基于 YuNet ONNX 模型）。
-detect() 返回人脸框列表；crop_face() 裁剪并缩放到推理所需尺寸。
+detect() 返回人脸框列表（含 5 个关键点）；crop_face() 裁剪并缩放到推理所需尺寸。
 """
 import os
 from typing import List, Dict, Tuple
@@ -24,14 +24,26 @@ class FaceDetector:
         self._detector = cv2.FaceDetectorYN.create(
             model=model_path,
             config="",
-            input_size=(320, 320),  # 任意值，会在 detect 时按实际帧大小调整
+            input_size=(320, 320),
             score_threshold=0.5,
             nms_threshold=0.3,
             top_k=5,
         )
 
-    def detect(self, frame: np.ndarray) -> List[Dict[str, int]]:
-        """检测人脸。返回 [{x, y, w, h}, ...]，无脸时返回 []。"""
+    def detect(self, frame: np.ndarray) -> List[Dict]:
+        """检测人脸。返回含 5 个关键点的字典列表。
+
+        每个字典包含:
+            x, y, w, h: 人脸框
+            landmarks: {
+                "right_eye": (x, y),
+                "left_eye": (x, y),
+                "nose": (x, y),
+                "mouth_right": (x, y),
+                "mouth_left": (x, y),
+            }
+            score: 置信度
+        """
         h, w = frame.shape[:2]
         self._detector.setInputSize((w, h))
         _, faces = self._detector.detect(frame)
@@ -39,12 +51,24 @@ class FaceDetector:
             return []
         result = []
         for face in faces:
-            x, y, w, h = int(face[0]), int(face[1]), int(face[2]), int(face[3])
-            result.append({"x": x, "y": y, "w": w, "h": h})
+            x, y, fw, fh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
+            landmarks = {
+                "right_eye": (float(face[4]), float(face[5])),
+                "left_eye": (float(face[6]), float(face[7])),
+                "nose": (float(face[8]), float(face[9])),
+                "mouth_right": (float(face[10]), float(face[11])),
+                "mouth_left": (float(face[12]), float(face[13])),
+            }
+            score = float(face[14])
+            result.append({
+                "x": x, "y": y, "w": fw, "h": fh,
+                "landmarks": landmarks,
+                "score": score,
+            })
         return result
 
     def crop_face(
-        self, frame: np.ndarray, face: Dict[str, int], output_size: Tuple[int, int] = (64, 64)
+        self, frame: np.ndarray, face: Dict, output_size: Tuple[int, int] = (64, 64)
     ) -> np.ndarray:
         """裁剪人脸区域并缩放到指定大小。返回 BGR ndarray。"""
         x, y, w, h = face["x"], face["y"], face["w"], face["h"]
@@ -55,7 +79,6 @@ class FaceDetector:
         y_end = min(frame.shape[0], y + h)
         cropped = frame[y:y_end, x:x_end]
         if cropped.size == 0:
-            # 退化情况：返回灰色块而不是崩
             return np.full((output_size[1], output_size[0], 3), 128, dtype=np.uint8)
         resized = cv2.resize(cropped, output_size)
         return resized

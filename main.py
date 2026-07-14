@@ -4,6 +4,7 @@
     python main.py
 """
 import sys
+import os
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 import config
@@ -11,13 +12,10 @@ from ui.main_window import MainWindow
 
 
 def check_models():
-    """启动前检查模型文件是否存在。"""
-    import os
+    """启动前检查必需的模型文件是否存在。"""
     missing = []
     if not os.path.exists(config.YUNET_MODEL_PATH):
         missing.append(config.YUNET_MODEL_PATH)
-    if not os.path.exists(config.FERPLUS_MODEL_PATH):
-        missing.append(config.FERPLUS_MODEL_PATH)
     return missing
 
 
@@ -27,7 +25,7 @@ def main():
     # 模型文件预检
     missing = check_models()
     if missing:
-        msg = "以下模型文件缺失：\n\n"
+        msg = "以下必需的模型文件缺失：\n\n"
         msg += "\n".join(f"  - {p}" for p in missing)
         msg += "\n\n请按 assets/README.md 下载模型后重试。"
         QMessageBox.critical(None, "模型缺失", msg)
@@ -35,13 +33,12 @@ def main():
 
     window = MainWindow(
         yunet_path=config.YUNET_MODEL_PATH,
-        ferplus_path=config.FERPLUS_MODEL_PATH,
+        ferplus_path="",  # 不再使用
         photos_dir=config.PHOTOS_DIR,
     )
     window.show()
 
     # 确保 photos 目录存在
-    import os
     os.makedirs(config.PHOTOS_DIR, exist_ok=True)
 
     return app.exec()

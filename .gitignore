@@ -10,6 +10,15 @@ captured/*.jpg
 captured/*.png
 test_frame.jpg
 
+# PyInstaller 打包产物
+build/
+dist/
+*.spec
+
+# 临时脚本（可能包含敏感信息）
+create_release.py
+release.json
+
 # IDE
 .vscode/
 .idea/

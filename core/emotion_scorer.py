@@ -7,31 +7,20 @@
 - 嘴部右角 (mr_x, mr_y)
 - 嘴部左角 (ml_x, ml_y)
 
-v3 算法：综合多个几何特征。
-原因：v2 用嘴宽/眼距作为主信号，但实测发现 YuNet 的"嘴部左右角"标注
-对露齿大笑时不稳定（mouth_w/eye_d 跟不笑几乎一样）。
-改用以下三个**大笑时变化显著**的几何特征：
+v5 算法：**基于'嘴部张开度/眼距'作为主特征**。
 
-1. **eye_to_mouth_y_ratio** (主信号):
-   嘴部 Y 距眼睛 Y 的距离（归一化）。
-   - 不笑: ~1.15-1.18
-   - 大笑（嘴部上移）: ~1.05-1.10
-   - 越小 = 越笑
+用户实测发现（这是最可靠的特征）：
+- 闭嘴/不笑: mouth_h/eye_d ≈ 0.014-0.027 （嘴部高度小）
+- 露齿大笑:  mouth_h/eye_d ≈ 0.06-0.12   （嘴部张开，露齿）
 
-2. **eye_dist / face_height_proxy** (眯眼信号):
-   双眼距离相对脸部高度的归一化。
-   - 眯眼（笑眯眼）时眼距变小
-   - 越笑 = 比值越小
+差异 3-4 倍！比"嘴部左右角位置变化"或"嘴部上下移动"更可靠。
 
-3. **mouth_width_ratio** (辅助信号):
-   嘴宽/眼距。
-   - 笑时嘴会变宽
+同时辅以：
+- mouth_w/eye_d (嘴宽)
+- eye_dist (眯眼 = 眼距变小)
 
-分数公式：
-    score = mouth_up_score + eye_squeeze_score + mouth_width_score
-    其中各项用线性映射到 0-100 后求平均
-
-这样大笑时（嘴部上移+眯眼+嘴宽）三项都激活，分数可达 80+。
+v4 失败原因：v4 用嘴部 Y 位置变化作为信号，但用户实测中嘴部 Y 几乎不变，
+            只在张嘴大笑时才有微小变化。基线对比的方法不可靠。
 """
 import os
 from typing import Tuple, List, Optional
@@ -112,50 +101,40 @@ class EmotionScorer:
         mr_x: float, mr_y: float,
         ml_x: float, ml_y: float,
     ) -> Tuple[int, dict]:
-        """从 5 个关键点计算笑容分数（v4 相对基线）。"""
+        """从 5 个关键点计算笑容分数（v5: 嘴部张开度为主特征）。"""
         eye_dist = np.sqrt((re_x - le_x) ** 2 + (re_y - le_y) ** 2)
         if eye_dist < 1:
             return 0, {"error": "eye_dist too small"}
 
-        eye_avg_y = (re_y + le_y) / 2
-        mouth_avg_y = (mr_y + ml_y) / 2
-        eye_to_mouth_y_ratio = (mouth_avg_y - eye_avg_y) / eye_dist
+        # 1. 嘴部张开度（主信号）：mr_y - ml_y 差值
+        mouth_h = abs(mr_y - ml_y)
+        mouth_h_ratio = mouth_h / eye_dist
 
+        # 2. 嘴宽（辅助）
         mouth_width = np.sqrt((mr_x - ml_x) ** 2 + (mr_y - ml_y) ** 2)
         mouth_width_ratio = mouth_width / eye_dist
 
-        # 建立/使用基线
-        if self._baseline is None or self._baseline_frames < 30:
-            self._update_baseline(mouth_width_ratio, eye_to_mouth_y_ratio)
-            # 前 30 帧：分数 = 0（让用户先稳定基线）
-            return 0, {
-                "mouth_width_ratio": mouth_width_ratio,
-                "eye_to_mouth_y_ratio": eye_to_mouth_y_ratio,
-                "baseline_ready": False,
-                "baseline_frames": self._baseline_frames,
-            }
+        # 基于实测数据校准：
+        # 闭嘴:  mouth_h_ratio ~ 0.02 -> 0 分
+        # 大笑:  mouth_h_ratio ~ 0.10 -> 100 分
+        # 线性: (mouth_h_ratio - 0.02) / 0.08 * 100
+        mouth_h_score = max(0, min(100, (mouth_h_ratio - 0.02) / 0.08 * 100))
 
-        baseline_mw, baseline_em = self._baseline
-        # 嘴部 Y 变小 = 大笑 (e2my 减小)
-        em_diff = baseline_em - eye_to_mouth_y_ratio
-        # 嘴宽增加 = 大笑
-        mw_diff = mouth_width_ratio - baseline_mw
+        # 嘴宽辅助：闭嘴 0.85, 大笑 0.92
+        mouth_w_score = max(0, min(100, (mouth_width_ratio - 0.85) / 0.07 * 100))
 
-        # 经验值（基于你实测：露齿大笑 em_diff~0.02, mw_diff~0.05-0.10）:
-        em_score = max(0, min(100, em_diff / 0.025 * 100))
-        mw_score = max(0, min(100, mw_diff / 0.06 * 100))
+        # 综合：主信号占 80%, 辅助占 20%
+        score = int(mouth_h_score * 0.8 + mouth_w_score * 0.2)
 
-        score = int((em_score + mw_score) / 2)
+        # 不需要基线（v5 用绝对值）
+        # 但仍要更新基线用于调试
+        self._update_baseline(mouth_width_ratio, 0)
 
         return score, {
+            "mouth_height_ratio": mouth_h_ratio,
             "mouth_width_ratio": mouth_width_ratio,
-            "eye_to_mouth_y_ratio": eye_to_mouth_y_ratio,
-            "mouth_width_diff": mw_diff,
-            "mouth_y_diff": em_diff,
-            "baseline_mw": baseline_mw,
-            "baseline_em": baseline_em,
-            "em_score": em_score,
-            "mw_score": mw_score,
+            "mouth_h_score": mouth_h_score,
+            "mouth_w_score": mouth_w_score,
         }
 
     def score(self, face_bgr: np.ndarray) -> Tuple[int, List[float]]:

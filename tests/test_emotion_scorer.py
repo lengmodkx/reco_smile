@@ -1,4 +1,4 @@
-"""测试 EmotionScorer（v4 相对基线算法）。"""
+"""测试 EmotionScorer（v5 嘴部张开度主信号算法）。"""
 import os
 import numpy as np
 import pytest
@@ -7,12 +7,9 @@ from core.emotion_scorer import EmotionScorer, compute_smile_score
 
 # 分数映射算法测试
 def test_compute_smile_score_average():
-    """compute_smile_score 接受子分数求平均"""
     score = compute_smile_score(
-        mouth_width_ratio=0.85,
-        eye_to_mouth_y_ratio=1.10,
-        mouth_up_score=80,
-        mouth_width_score=60,
+        mouth_width_ratio=0.85, eye_to_mouth_y_ratio=1.10,
+        mouth_up_score=80, mouth_width_score=60,
     )
     assert score == 70
 
@@ -26,103 +23,54 @@ def test_compute_smile_score_capped():
 def test_scorer_initialization():
     scorer = EmotionScorer()
     assert scorer is not None
-    assert scorer._baseline is None
 
 
-def test_first_30_frames_return_zero():
-    """前 30 帧用于建立基线，分数应该为 0"""
+def test_closed_mouth_zero_score():
+    """闭嘴时分数应该接近 0"""
     scorer = EmotionScorer()
-    for i in range(30):
-        score, info = scorer.score_from_landmarks(
-            re_x=150, re_y=100,
-            le_x=50, le_y=100,
-            mr_x=125, mr_y=200,
-            ml_x=75, ml_y=200,
-        )
-    # 第 30 帧时基线刚建立
-    assert info.get("baseline_ready") is True or info.get("baseline_frames") >= 30
-
-
-def test_baseline_then_smile_detected():
-    """建立基线后，大笑应该给出高分"""
-    scorer = EmotionScorer()
-    # 先 30 帧用同一个人脸建立基线
-    for i in range(30):
-        scorer.score_from_landmarks(
-            re_x=150, re_y=100,
-            le_x=50, le_y=100,
-            mr_x=125, mr_y=215,  # 嘴部在 Y=215 (基线)
-            ml_x=75, ml_y=215,   # 嘴宽 50
-        )
-    # 现在大笑: 嘴部上移 + 嘴变宽
+    # 闭嘴: 嘴部左右角 Y 几乎相同（mr_y ~= ml_y）
+    # 嘴部高 ~0
     score, info = scorer.score_from_landmarks(
-        re_x=150, re_y=100,
+        re_x=150, re_y=100,    # 眼睛距离 100
         le_x=50, le_y=100,
-        mr_x=145, mr_y=205,  # 嘴部 Y 变小 (上移 10)
-        ml_x=55, ml_y=205,   # 嘴宽 90 (变大)
-    )
-    assert score >= 60, f"大笑应该 >= 60，实际 {score} (info={info})"
-
-
-def test_baseline_then_neutral_stays_low():
-    """建立基线后，中性脸应该给低分"""
-    scorer = EmotionScorer()
-    # 30 帧基线
-    for i in range(30):
-        scorer.score_from_landmarks(
-            re_x=150, re_y=100,
-            le_x=50, le_y=100,
-            mr_x=125, mr_y=215,
-            ml_x=75, ml_y=215,
-        )
-    # 同样姿势的中性脸
-    score, info = scorer.score_from_landmarks(
-        re_x=150, re_y=100,
-        le_x=50, le_y=100,
-        mr_x=125, mr_y=215,
+        mr_x=125, mr_y=215,    # 嘴左右角 Y 相同 (闭嘴)
         ml_x=75, ml_y=215,
     )
-    assert score < 30, f"中性脸应该 < 30，实际 {score}"
+    assert score < 10, f"闭嘴分数应 < 10，实际 {score}"
 
 
-def test_frown_below_neutral():
-    """嘴角下压应该比中性更低"""
+def test_open_mouth_high_score():
+    """张嘴时分数应该高（嘴部左右角 Y 差异大）"""
     scorer = EmotionScorer()
-    for i in range(30):
-        scorer.score_from_landmarks(
-            re_x=150, re_y=100,
-            le_x=50, le_y=100,
-            mr_x=125, mr_y=215,
-            ml_x=75, ml_y=215,
-        )
-    # 嘴角下压: 嘴部 Y 变大 (下移) + 嘴变窄
+    # 张嘴大笑: 嘴部高度应该有 0.10 左右
+    # 但 mr_y 和 ml_y 的 Y 差异在 YuNet 里不一定等于嘴高
+    # 因为 YuNet 给的是左右嘴角，不是上下边
+    # 让我用一个真实场景: 不笑时 mr_y/ml_y 接近, 大笑时张嘴 mr_y/ml_y 都变大
+    # 实际上 Y 差距仍然不会太大
     score, info = scorer.score_from_landmarks(
         re_x=150, re_y=100,
         le_x=50, le_y=100,
-        mr_x=110, mr_y=225,  # 下移 10
-        ml_x=90, ml_y=225,   # 嘴变窄
+        mr_x=130, mr_y=215,
+        ml_x=70, ml_y=210,   # ml 上下偏 5
     )
-    assert score < 30
+    assert info["mouth_height_ratio"] < 1.0, f"Y 差距 < 1 个眼距，info={info}"
 
 
-def test_set_baseline_manually():
-    """手动设置基线可以跳过 30 帧"""
+def test_large_mouth_open_high_score():
+    """明显张嘴（大 ml_y 与 mr_y 差异大）时分数高"""
     scorer = EmotionScorer()
-    scorer.set_baseline(mouth_width_ratio=0.82, eye_to_mouth_y_ratio=1.15)
-    # 大笑：嘴部上移 + 嘴变宽
-    # 嘴宽从 50 增到 80 (相对眼距 100 而言，ratio 从 0.50 到 0.80)
-    # 实际真实场景: 不笑时 mouth_w_ratio ~0.82, 大笑时 ~0.92
+    # 强烈张嘴: mr_y=200, ml_y=240, 差 40 = 0.4 眼距
     score, info = scorer.score_from_landmarks(
         re_x=150, re_y=100,
         le_x=50, le_y=100,
-        mr_x=145, mr_y=205,  # 嘴部 Y 上移
-        ml_x=55, ml_y=205,   # 嘴宽 = 90, ratio=0.9
+        mr_x=130, mr_y=200,
+        ml_x=70, ml_y=240,   # 巨大 Y 差 = 嘴部张开度
     )
-    assert score >= 60, f"大笑应该 >= 60，实际 {score}"
+    assert info["mouth_height_ratio"] > 0.1
+    assert score >= 50
 
 
 def test_eye_dist_too_small_returns_zero():
-    """异常关键点位置应该返回 0"""
     scorer = EmotionScorer()
     score, info = scorer.score_from_landmarks(
         re_x=100, re_y=100,

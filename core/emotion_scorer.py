@@ -100,41 +100,57 @@ class EmotionScorer:
         le_x: float, le_y: float,
         mr_x: float, mr_y: float,
         ml_x: float, ml_y: float,
+        face_w: float = 0,
+        face_h: float = 0,
+        nose_y: float = 0,
     ) -> Tuple[int, dict]:
-        """从 5 个关键点计算笑容分数（v5: 嘴部张开度为主特征）。"""
-        eye_dist = np.sqrt((re_x - le_x) ** 2 + (re_y - le_y) ** 2)
-        if eye_dist < 1:
-            return 0, {"error": "eye_dist too small"}
+        """从 5 个关键点计算笑容分数（v6 - 嘴角上扬型专用）。
 
-        # 1. 嘴部张开度（主信号）：mr_y - ml_y 差值
-        mouth_h = abs(mr_y - ml_y)
-        mouth_h_ratio = mouth_h / eye_dist
+        **用户实测发现**：YuNet 的 5 个关键点对"露齿正常笑"反应不灵敏：
+        - mr_y 和 ml_y 几乎相同 (因为是嘴角、不是嘴角上下)
+        - 嘴宽变化也很小 (0.82 → 0.91 范围太窄)
 
-        # 2. 嘴宽（辅助）
-        mouth_width = np.sqrt((mr_x - ml_x) ** 2 + (mr_y - ml_y) ** 2)
-        mouth_width_ratio = mouth_width / eye_dist
+        **唯一可靠特征**：嘴角的 X 位置外推（嘴角上扬的外在表现）。
 
-        # 基于实测数据校准：
-        # 闭嘴:  mouth_h_ratio ~ 0.02 -> 0 分
-        # 大笑:  mouth_h_ratio ~ 0.10 -> 100 分
-        # 线性: (mouth_h_ratio - 0.02) / 0.08 * 100
-        mouth_h_score = max(0, min(100, (mouth_h_ratio - 0.02) / 0.08 * 100))
+        算法：用脸宽归一化嘴角 X 位置
+        - mouth_x_extent = max(mr_x, ml_x) - min(mr_x, ml_x)，对脸框宽度的比例
+        - 闭嘴: extent/face_w ≈ 0.45-0.50
+        - 露齿笑: extent/face_w ≈ 0.55-0.65
+        - 大笑: extent/face_w ≈ 0.65-0.75
 
-        # 嘴宽辅助：闭嘴 0.85, 大笑 0.92
-        mouth_w_score = max(0, min(100, (mouth_width_ratio - 0.85) / 0.07 * 100))
+        这是唯一能区分"闭嘴"和"笑"的几何特征（基于实际数据）。
+        """
+        if face_w <= 0:
+            return 0, {"error": "face_w invalid"}
 
-        # 综合：主信号占 80%, 辅助占 20%
-        score = int(mouth_h_score * 0.8 + mouth_w_score * 0.2)
+        # 主信号：嘴角外推量（绝对像素，对脸宽归一化）
+        mouth_extent_x = max(mr_x, ml_x) - min(mr_x, ml_x)
+        mouth_extent_ratio = mouth_extent_x / face_w
 
-        # 不需要基线（v5 用绝对值）
-        # 但仍要更新基线用于调试
-        self._update_baseline(mouth_width_ratio, 0)
+        # 闭嘴 mouth_extent_ratio ≈ 0.45
+        # 露齿笑 ≈ 0.55
+        # 大笑 ≈ 0.65
+        # 线性映射: 0.45 -> 0 分, 0.65 -> 100 分
+        main_score = max(0, min(100, (mouth_extent_ratio - 0.45) / 0.20 * 100))
+
+        # 辅助信号（保留）：嘴部 Y 差比，捕捉张嘴笑
+        if face_w > 0:
+            eye_dist = abs(re_x - le_x) if abs(re_x - le_x) > 1 else 1
+            mouth_h = abs(mr_y - ml_y)
+            mouth_h_ratio = mouth_h / eye_dist
+            aux_score = max(0, min(100, (mouth_h_ratio - 0.02) / 0.10 * 100))
+        else:
+            aux_score = 0
+
+        # 综合：主 80% + 辅助 20%
+        score = int(main_score * 0.8 + aux_score * 0.2)
 
         return score, {
-            "mouth_height_ratio": mouth_h_ratio,
-            "mouth_width_ratio": mouth_width_ratio,
-            "mouth_h_score": mouth_h_score,
-            "mouth_w_score": mouth_w_score,
+            "mouth_extent_ratio": mouth_extent_ratio,
+            "mouth_extent_px": mouth_extent_x,
+            "face_w": face_w,
+            "main_score": main_score,
+            "aux_score": aux_score,
         }
 
     def score(self, face_bgr: np.ndarray) -> Tuple[int, List[float]]:

@@ -77,6 +77,8 @@ class SmilePipeline:
             le_x=lm["left_eye"][0], le_y=lm["left_eye"][1],
             mr_x=lm["mouth_right"][0], mr_y=lm["mouth_right"][1],
             ml_x=lm["mouth_left"][0], ml_y=lm["mouth_left"][1],
+            face_w=largest["w"], face_h=largest["h"],
+            nose_y=lm["nose"][1],
         )
 
         # 在框上方写分数

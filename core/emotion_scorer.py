@@ -126,37 +126,28 @@ class EmotionScorer:
         # === A. 嘴角外推 ===
         mouth_extent_x = max(mr_x, ml_x) - min(mr_x, ml_x)
         mouth_extent_ratio = mouth_extent_x / face_w
-        score_a = max(0, min(100, (mouth_extent_ratio - 0.40) / 0.10 * 100))
+        score_a = max(0, min(100, (mouth_extent_ratio - 0.42) / 0.08 * 100))
 
         # === B. 嘴部 Y 差（张嘴）===
         mouth_h = abs(mr_y - ml_y)
         mouth_h_ratio = mouth_h / eye_dist
         score_b = max(0, min(100, (mouth_h_ratio - 0.02) / 0.10 * 100))
 
-        # === C. 鼻尖到嘴部距离（嘴部位置变化）===
-        if nose_y > 0 and face_h > 0:
-            mouth_center_y = (mr_y + ml_y) / 2
-            nose_to_mouth = abs(mouth_center_y - nose_y)
-            n2m_ratio = nose_to_mouth / face_h
-            # 不笑时 n2m ≈ 0.13-0.15, 微笑时 ≈ 0.16, 大笑时 ≈ 0.18+
-            # 阈值 0.16 (轻微提高)
-            score_c = max(0, min(100, (n2m_ratio - 0.16) / 0.04 * 100))
-        else:
-            score_c = 0
+        # === C. (已禁用 - 信号不可靠) ===
+        score_c = 0
 
         # === D. 嘴宽变化 ===
         mouth_width = np.sqrt((mr_x - ml_x) ** 2 + (mr_y - ml_y) ** 2)
         mouth_width_ratio = mouth_width / eye_dist
-        # 不笑: 0.78, 大笑: 0.92
         score_d = max(0, min(100, (mouth_width_ratio - 0.78) / 0.14 * 100))
 
-        # 取最大值（更激进）
-        score = int(max(score_a, score_b, score_c, score_d))
+        # v8 加权平均 (避开 max() 的过敏感问题)
+        # A (嘴角外推) 60% + B (张嘴) 30% + D (嘴宽) 10%
+        score = int(score_a * 0.6 + score_b * 0.3 + score_d * 0.1)
 
         return score, {
             "mouth_extent_ratio": mouth_extent_ratio,
             "mouth_h_ratio": mouth_h_ratio,
-            "n2m_ratio": n2m_ratio if nose_y > 0 else 0,
             "mouth_width_ratio": mouth_width_ratio,
             "score_a": score_a,
             "score_b": score_b,

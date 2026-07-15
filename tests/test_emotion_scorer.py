@@ -51,15 +51,14 @@ def test_smile_returns_high():
 
 
 def test_big_smile_returns_max():
-    """大笑 score 应该 ≥ 80"""
+    """大笑 score 应该 >= 60（v8 加权平均降低了分数上限）"""
     scorer = EmotionScorer()
-    # 极大外推
     score, info = scorer.score_from_landmarks(
         re_x=150, re_y=100, le_x=50, le_y=100,
         mr_x=165, mr_y=215, ml_x=35, ml_y=215,  # extent=130, ratio=0.65
         face_w=200, face_h=240, nose_y=180,
     )
-    assert score >= 80
+    assert score >= 60, f"大笑应 >= 60，实际 {score}"
 
 
 def test_invalid_face_w_returns_zero():

@@ -54,4 +54,5 @@ def test_surprise_weight_in_range():
 
 def test_threshold_default_is_reasonable():
     """默认阈值应该不会太低（漏拍）也不会太高（不拍）"""
-    assert 40 <= SMILE_THRESHOLD <= 80
+    # v6.1 后阈值降到 25 以适配 YuNet 5 关键点的精度
+    assert 20 <= SMILE_THRESHOLD <= 80
